@@ -140,6 +140,13 @@ int video_download_and_merge(char *cookie, char *stream_url, char *audio_url,
         }
         free(command_merge);
 
+        if (remove(stream_outname) < 0 || remove(audio_outname) < 0) {
+            ERR("Failed to remove %s & %s\n", stream_outname, audio_outname);
+            ERR("%s\n", strerror(errno));
+            status = -1;
+            goto end;
+        }
+
     end:
         free(video_outname);
         free(stream_outname);

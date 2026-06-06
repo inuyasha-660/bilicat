@@ -28,7 +28,8 @@ int main(int argc, char *argv[])
         ARG_INT(&stream->audio, "-a", "--audio", "Video/Live audio quality",
                 NULL, NULL),
         ARG_STR(&stream->output, "-o", "--output",
-                "Output directory(include '/' or '\\')", NULL, NULL),
+                "Output directory(must exist and include separator)", NULL,
+                NULL),
         ARG_END(),
     };
 
