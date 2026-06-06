@@ -76,12 +76,15 @@ int video_download_and_merge(char *cookie, char *stream_url, char *audio_url,
 
         char *stream_outname = NULL;
         char *audio_outname = NULL;
+        char *video_outname = NULL;
         if (dir != NULL) {
             asprintf(&stream_outname, "%s%s_stream.m4s", dir, filename);
             asprintf(&audio_outname, "%s%s_audio.m4s", dir, filename);
+            asprintf(&video_outname, "%s%s.mp4", dir, filename);
         } else {
             asprintf(&stream_outname, "%s_stream.m4s", filename);
             asprintf(&audio_outname, "%s_audio.m4s", filename);
+            asprintf(&video_outname, "%s.mp4", filename);
         }
 
         FILE *stream_outfile = fopen(stream_outname, "w");
@@ -109,6 +112,7 @@ int video_download_and_merge(char *cookie, char *stream_url, char *audio_url,
         code = curl_easy_perform(curl);
         if (code != CURLE_OK) {
             ERR("%s\n", curl_easy_strerror(code));
+            status = -1;
             goto end;
         }
         fclose(stream_outfile);
@@ -120,11 +124,24 @@ int video_download_and_merge(char *cookie, char *stream_url, char *audio_url,
         code = curl_easy_perform(curl);
         if (code != CURLE_OK) {
             ERR("%s\n", curl_easy_strerror(code));
+            status = -1;
             goto end;
         }
         fclose(audio_outfile);
 
+        char *command_merge = NULL;
+        asprintf(&command_merge, "ffmpeg -y -i \"%s\" -i \"%s\" -c copy \"%s\"",
+                 stream_outname, audio_outname, video_outname);
+        if (system(command_merge) < 0) {
+            ERR("Failed to merge %s & %s \n", stream_outname, audio_outname);
+            ERR("%s\n", strerror(errno));
+            status = -1;
+            goto end;
+        }
+        free(command_merge);
+
     end:
+        free(video_outname);
         free(stream_outname);
         free(audio_outname);
         curl_slist_free_all(header);
