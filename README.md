@@ -64,14 +64,14 @@ bilicat [-h --help][-c --cookie][-v --video][-l --live][-q --qn]
 
 来源: [视频编码代码 (bilibili-API-collect)](https://github.com/pskdje/bilibili-API-collect/blob/main/docs/video/videostream_url.md#%E8%A7%86%E9%A2%91%E7%BC%96%E7%A0%81%E4%BB%A3%E7%A0%81)  
 
-``--output``: 指定输出目录，必须存在，且传入的值包含目录分隔符 ('/' 或 '\\')
+``--output``: 指定输出目录，必须存在，且传入的值包含目录分隔符 ('/' 或 '\\')  
 [可选，默认为当前目录]
 
 ## 风控
 如遇到 ``code: -352`` 错误，是触发了 BiliBili 的风控，稍后重试几次即可
 
 ## 从源码安装
-编译依赖 [yyjson](https://ibireme.github.io/yyjson/doc/doxygen/html/) [libcurl](https://curl.se/libcurl/)，运行时需要安装 [FFmpeg (cli)](https://ffmpeg.org/)
+编译依赖 [yyjson](https://ibireme.github.io/yyjson/doc/doxygen/html/)，[libcurl](https://curl.se/libcurl/)，运行时需要安装 [FFmpeg (cli)](https://ffmpeg.org/)
 
 使用 [Meson](https://mesonbuild.com/) 编译
 ``````sh
