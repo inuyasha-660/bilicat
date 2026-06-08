@@ -17,9 +17,13 @@ bilicat [-h --help][-c --cookie][-v --video][-l --live][-q --qn]
 ``--live``: 直播取流，传入房间号  
 [必要，与 ``--video`` 二选一]  
 
-``--qn``: 视频流质量  
-[可选，默认取首个返回的视频流]   
+``--mid``: 主播 mid  
+[必要]  
 
+``--qn``: 视频流质量  
+[可选]   
+
+#### 视频流
 | 值   | 含义           | 备注                                                         |
 | ---- | -------------- | ------------------------------------------------------------ |
 | 6    | 240P 极速      | 仅 MP4 格式支持<br />仅`platform=html5`时有效                |
@@ -37,7 +41,22 @@ bilicat [-h --help][-c --cookie][-v --video][-l --live][-q --qn]
 | 127  | 8K 超高清      | 仅支持 DASH 格式<br />需要`fnval&1024=1024`<br />大会员认证  |
 | 129 | HDR Vivid | 大会员认证 |
 
+[视频流默认取首个返回流]
+
 来源: [qn视频清晰度标识 (bilibili-API-collect)](https://github.com/pskdje/bilibili-API-collect/blob/main/docs/video/videostream_url.md#qn%E8%A7%86%E9%A2%91%E6%B8%85%E6%99%B0%E5%BA%A6%E6%A0%87%E8%AF%86)  
+
+#### 直播流
+| 值   | 含义           | 
+| ---- | -------------- | 
+| 250 | 超清 |
+| 400 | 蓝光 |
+| 10000 | 原画 |
+| 30000 |	杜比 |
+| 20000 |	4K |
+
+[直播流默认 400 (蓝光)]
+
+来源: [清晰度代码 (bilibili-API-collect)](https://github.com/pskdje/bilibili-API-collect/blob/main/docs/live/info.md#%E6%B8%85%E6%99%B0%E5%BA%A6%E4%BB%A3%E7%A0%81)  
 
 ``--audio``: 音频流质量  
 [可选，默认取首个返回的音频流]  
