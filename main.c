@@ -21,6 +21,7 @@ int main(int argc, char *argv[])
         ARG_STR(&stream->video_id, "-v", "--video", "Pass bvid or aid", NULL,
                 NULL),
         ARG_STR(&stream->live_id, "-l", "--live", "Pass room id", NULL, NULL),
+        ARG_STR(&stream->mid, "-m", "--mid", "Pass the streamer's mid", NULL, NULL),
         ARG_INT(&stream->qn, "-q", "--qn", "Video/Live stream quality", NULL,
                 NULL),
         ARG_INT(&stream->code, "-d", "--coder", "Video/Live stream coder", NULL,

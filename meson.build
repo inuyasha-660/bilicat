@@ -11,7 +11,6 @@ dep = [
 src = files(
   'main.c',
   'api.c',
-  'utils.c',
   'libs/log.c',
   'libs/argparse.c',
   )

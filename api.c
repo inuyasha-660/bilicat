@@ -2,6 +2,7 @@
 #include "libs/log.h"
 #include <curl/curl.h>
 #include <errno.h>
+#include <signal.h>
 #include <string.h>
 #include <yyjson.h>
 
@@ -26,6 +27,13 @@ static const char *API_VIDEO_STREAM =
     "playurl?fnver=0&fnval=4048&fourk=1&from_client=BROWSER&need_"
     "fragment=false";
 
+// 获取直播流 m3u8
+static const char *API_LIVE_M3U8 =
+    "https://api.live.bilibili.com/xlive/play-gateway/master/url";
+
+// 用于控制直播取流状态
+volatile sig_atomic_t live_fetch_finish = false;
+
 static size_t curl_read_cb(char *content, size_t size, size_t nmemb,
                            void *userp)
 {
@@ -44,7 +52,7 @@ static size_t curl_read_cb(char *content, size_t size, size_t nmemb,
     return realsize;
 }
 
-void pages_free(Pages *pages)
+static void pages_free(Pages *pages)
 {
     if (pages == NULL) {
         return;
@@ -59,8 +67,10 @@ void pages_free(Pages *pages)
     free(pages);
 }
 
-int video_download_and_merge(char *cookie, char *stream_url, char *audio_url,
-                             char *filename, char *dir)
+void live_sig_handler(int signum) { live_fetch_finish = true; }
+
+static int video_download_and_merge(char *cookie, char *stream_url,
+                                    char *audio_url, char *filename, char *dir)
 {
     int   status = 0;
     CURL *curl = curl_easy_init();
@@ -158,8 +168,8 @@ int video_download_and_merge(char *cookie, char *stream_url, char *audio_url,
     return status;
 }
 
-int video_stream_fetch_finish(Stream *stream, struct Buffer *buffer,
-                              char **stream_url, char **audio_url)
+static int video_stream_fetch_finish(Stream *stream, struct Buffer *buffer,
+                                     char **stream_url, char **audio_url)
 {
     int status = 0;
 
@@ -238,7 +248,7 @@ end:
     return status;
 }
 
-int video_stream_fetch(Stream *stream, Pages *pages)
+static int video_stream_fetch(Stream *stream, Pages *pages)
 {
     if (stream == NULL || pages == NULL) {
         ERR("stream/pages is NULL\n");
@@ -327,7 +337,7 @@ int video_stream_fetch(Stream *stream, Pages *pages)
     return status;
 }
 
-int video_print_info_finish(struct Buffer *buffer, Pages *pages)
+static int video_print_info_finish(struct Buffer *buffer, Pages *pages)
 {
     if (buffer == NULL || buffer->size == 0) {
         ERR("buffer is NULL\n");
@@ -408,7 +418,7 @@ end:
     return status;
 }
 
-int video_print_info(Stream *stream, Pages *pages)
+static int video_print_info(Stream *stream, Pages *pages)
 {
     if (stream == NULL || stream->video_id == NULL) {
         ERR("video_id is NULL\n");
@@ -463,6 +473,103 @@ int video_print_info(Stream *stream, Pages *pages)
     return status;
 }
 
+static int live_run_fetch_loop(char *output, char *url_m3u8, char *base_url)
+{
+    int status = 0;
+
+    signal(SIGINT, live_sig_handler);
+
+    while (!live_fetch_finish) {
+    }
+
+    return status;
+}
+
+static int live_get_index_m3u8_finish(int qn, struct Buffer *buffer,
+                                      char **url_m3u8, char **base_url)
+{
+    int   status = 0;
+    char *target = NULL;
+
+    if (qn == 0) {
+        asprintf(&target, "BILI-QN=250");
+    } else {
+        asprintf(&target, "BILI-QN=%d", qn);
+    }
+
+    bool  have_found_url = false;
+    char *line = strtok(buffer->memory, "\n");
+    while (line != NULL) {
+        if (have_found_url) {
+            *url_m3u8 = strdup(line);
+
+            char  *base_url_p = strstr(line, "index.m3u8");
+            size_t offset = base_url_p - line;
+            *base_url = (char *)malloc((offset + 1) * sizeof(char));
+            snprintf(*base_url, offset + 1, "%s", line);
+
+            break;
+        }
+
+        if (strstr(line, target)) {
+            have_found_url = true;
+        }
+
+        line = strtok(NULL, "\n");
+    }
+    if (*url_m3u8 == NULL || *base_url == NULL) {
+        ERR("Target qn or base_url not found\n");
+        status = -1;
+    }
+
+    free(target);
+    return status;
+}
+
+static int live_get_url_m3u8(Stream *stream, char **url_m3u8, char **base_url)
+{
+    int   status = 0;
+    char *url = NULL;
+
+    if (stream->mid == NULL) {
+        ERR("mid is NULL\n");
+        return -1;
+    }
+    asprintf(&url, "%s?cid=%s&mid=%s", API_LIVE_M3U8, stream->live_id,
+             stream->mid);
+
+    CURL *curl = curl_easy_init();
+    if (curl) {
+        CURLcode       code;
+        struct Buffer *buffer = (struct Buffer *)malloc(sizeof(struct Buffer));
+        buffer->memory = NULL;
+        buffer->size = 0;
+
+        curl_easy_setopt(curl, CURLOPT_URL, url);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_read_cb);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, buffer);
+
+        INFO("[GET] %s\n", url);
+
+        code = curl_easy_perform(curl);
+        if (code != CURLE_OK) {
+            ERR("Failed to get url.m3u8\n");
+            ERR("%s\n", curl_easy_strerror(code));
+            status = -1;
+        } else {
+            status = live_get_index_m3u8_finish(stream->qn, buffer, url_m3u8,
+                                                base_url);
+        }
+
+        free(buffer->memory);
+        free(buffer);
+        curl_easy_cleanup(curl);
+    }
+
+    free(url);
+    return status;
+}
+
 int stream_perform(Stream *stream)
 {
     if (stream == NULL || stream->type == UNINIT) {
@@ -490,6 +597,22 @@ int stream_perform(Stream *stream)
         break;
     }
     case LIVE: {
+        char *url_m3u8 = NULL;
+        char *base_url = NULL;
+        status = live_get_url_m3u8(stream, &url_m3u8, &base_url);
+        if (status < 0 || url_m3u8 == NULL || base_url == NULL) {
+            ERR("Aborted with code %d\n", status);
+            break;
+        }
+
+        INFO("Index m3u8: %s\n", url_m3u8);
+        status = live_run_fetch_loop(stream->output, url_m3u8, base_url);
+        if (status < 0) {
+            ERR("Aborted with code %d\n", status);
+        }
+
+        free(url_m3u8);
+        free(base_url);
         break;
     }
     default: {

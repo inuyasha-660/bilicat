@@ -16,6 +16,7 @@ struct Stream {
     char *cookie;
     char *video_id;
     char *live_id;
+    char *mid;
     int  qn;
     int  code;
     int  audio;
