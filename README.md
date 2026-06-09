@@ -54,7 +54,7 @@ bilicat [-h --help][-c --cookie][-v --video][-l --live][-q --qn]
 | 30000 |	杜比 |
 | 20000 |	4K |
 
-[直播流默认 400 (蓝光)]
+[直播流默认 250 (超清)]
 
 来源: [清晰度代码 (bilibili-API-collect)](https://github.com/pskdje/bilibili-API-collect/blob/main/docs/live/info.md#%E6%B8%85%E6%99%B0%E5%BA%A6%E4%BB%A3%E7%A0%81)  
 
