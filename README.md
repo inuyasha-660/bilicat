@@ -92,6 +92,8 @@ bilicat [-h --help][-c --cookie][-v --video][-l --live][-q --qn]
 ## 从源码安装
 编译依赖 [yyjson](https://ibireme.github.io/yyjson/doc/doxygen/html/)，[libcurl](https://curl.se/libcurl/)，运行时需要安装 [FFmpeg (cli)](https://ffmpeg.org/)
 
+参数解析库: [clib](https://github.com/luzhixing12345/clib)
+
 使用 [Meson](https://mesonbuild.com/) 编译
 ``````sh
 meson setup build
