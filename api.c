@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <signal.h>
 #include <string.h>
+#include <unistd.h>
 #include <yyjson.h>
 
 #define USER_AGENT                                                          \
@@ -146,6 +147,7 @@ static int video_download_and_merge(char *cookie, char *stream_url,
             ERR("Failed to merge %s & %s \n", stream_outname, audio_outname);
             ERR("%s\n", strerror(errno));
             status = -1;
+            free(command_merge);
             goto end;
         }
         free(command_merge);
@@ -473,20 +475,200 @@ static int video_print_info(Stream *stream, Pages *pages)
     return status;
 }
 
-static int live_run_fetch_loop(char *output, char *url_m3u8, char *base_url)
+static int live_run_fetch_loop_finish(char *path_outfile_m4s,
+                                      char *path_outfile_mp4)
 {
-    int status = 0;
+    char *command_revise = NULL;
+    asprintf(&command_revise, "ffmpeg -i %s -c copy -fflags +genpts %s",
+             path_outfile_m4s, path_outfile_mp4);
+
+    if (system(command_revise) < 0) {
+        ERR("Failed to revise %s.m4s\n", path_outfile_m4s);
+        ERR("%s\n", strerror(errno));
+        free(command_revise);
+        return -1;
+    }
+    free(command_revise);
+
+    if (remove(path_outfile_m4s) < 0) {
+        ERR("Failed to remove %s & %s\n", path_outfile_m4s);
+        ERR("%s\n", strerror(errno));
+        return -1;
+    }
+
+    return 0;
+}
+
+static int live_run_fetch_loop(Stream *stream, char *base_url,
+                               char *media_sequence, char *init_seg)
+{
+    if (base_url == NULL || media_sequence == NULL || init_seg == NULL) {
+        ERR("base_url/media_sequence/init_seg is NULL\n");
+        return -1;
+    }
+
+    int   status = 0;
+    CURL *curl = curl_easy_init();
+    if (!curl) {
+        ERR("Failed to initialize curl\n");
+        return -1;
+    }
+
+    char *url_init_seg = NULL;
+    asprintf(&url_init_seg, "%s%s", base_url, init_seg);
+
+    char *path_outfile_m4s = NULL;
+    char *path_outfile_mp4 = NULL;
+    if (stream->output == NULL) {
+        asprintf(&path_outfile_m4s, "%s.m4s", stream->live_id);
+        asprintf(&path_outfile_mp4, "%s.mp4", stream->live_id);
+    } else {
+        asprintf(&path_outfile_m4s, "%s%s.m4s", stream->output,
+                 stream->live_id);
+        asprintf(&path_outfile_mp4, "%s%s.mp4", stream->output,
+                 stream->live_id);
+    }
+
+    FILE *outfile_m4s = fopen(path_outfile_m4s, "a");
+    if (outfile_m4s == NULL) {
+        ERR("Failed to open %s\n", path_outfile_m4s);
+
+        free(url_init_seg);
+        curl_easy_cleanup(curl);
+        return -1;
+    }
+
+    CURLcode code;
+    curl_easy_setopt(curl, CURLOPT_URL, url_init_seg);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, USER_AGENT);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, outfile_m4s);
+
+    INFO("[GET] %s\n", url_init_seg);
+
+    code = curl_easy_perform(curl);
+    if (code != CURLE_OK) {
+        ERR("Failed to get video information\n");
+        ERR("%s\n", curl_easy_strerror(code));
+
+        free(url_init_seg);
+        curl_easy_cleanup(curl);
+        fclose(outfile_m4s);
+        return -1;
+    }
+
+    int    retry_count = 0;
+    char  *end_ptr = NULL;
+    size_t media_sequence_idx = strtoul(media_sequence, &end_ptr, 10);
 
     signal(SIGINT, live_sig_handler);
-
     while (!live_fetch_finish) {
+        char *url_seg = NULL;
+        asprintf(&url_seg, "%s%lu.m4s", base_url, media_sequence_idx);
+        curl_easy_setopt(curl, CURLOPT_URL, url_seg);
+
+    begin_fetch:
+        usleep(300 * 1000);
+
+        code = curl_easy_perform(curl);
+        if (code != CURLE_OK) {
+            if (retry_count > 3) {
+                ERR("Failed to fetch stream: %d.m4s\n", media_sequence_idx);
+                free(url_seg);
+                live_fetch_finish = true;
+            }
+
+            ERR("Failed to get %d.m4s, retry_count: %d\n", media_sequence_idx,
+                retry_count);
+
+            ++retry_count;
+            goto begin_fetch;
+        }
+
+        ++media_sequence_idx;
+        free(url_seg);
+    }
+    fclose(outfile_m4s);
+
+    status = live_run_fetch_loop_finish(path_outfile_m4s, path_outfile_mp4);
+
+    free(url_init_seg);
+    curl_easy_cleanup(curl);
+    free(path_outfile_mp4);
+    free(path_outfile_m4s);
+    return status;
+}
+
+static int live_run_fetch_loop_init_finish(struct Buffer *buffer,
+                                           char         **media_sequence,
+                                           char         **init_seg)
+{
+    char *line = strtok(buffer->memory, "\n");
+    while (line != NULL) {
+        if (strstr(line, "#EXT-X-MEDIA-SEQUENCE:")) {
+            *media_sequence = strdup(line + strlen("#EXT-X-MEDIA-SEQUENCE:"));
+        }
+        if (strstr(line, "#EXT-X-MAP:URI=")) {
+            size_t len = strlen(line) - strlen("#EXT-X-MAP:URI=");
+            *init_seg = strndup(line + strlen("#EXT-X-MAP:URI=") + 1, len - 2);
+        }
+
+        if (*init_seg != NULL && *media_sequence != NULL) {
+            break;
+        }
+
+        line = strtok(NULL, "\n");
+    }
+
+    if (*init_seg == NULL || *media_sequence == NULL) {
+        ERR("Failed to parse initialization segment or media sequence\n");
+        return -1;
+    }
+
+    return 0;
+}
+
+static int live_run_fetch_loop_init(char *url_m3u8, char **media_sequence,
+                                    char **init_seg)
+{
+    if (url_m3u8 == NULL) {
+        ERR("url_m3u8 is NULL\n");
+        return -1;
+    }
+
+    int   status = 0;
+    CURL *curl = curl_easy_init();
+    if (curl) {
+        CURLcode       code;
+        struct Buffer *buffer = (struct Buffer *)malloc(sizeof(struct Buffer));
+        buffer->memory = NULL;
+        buffer->size = 0;
+
+        curl_easy_setopt(curl, CURLOPT_URL, url_m3u8);
+        curl_easy_setopt(curl, CURLOPT_USERAGENT, USER_AGENT);
+        curl_easy_setopt(curl, CURLOPT_REFERER, REFERER);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_read_cb);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, buffer);
+
+        code = curl_easy_perform(curl);
+        if (code != CURLE_OK) {
+            ERR("Failed to get index.m3u8\n");
+            ERR("%s\n", curl_easy_strerror(code));
+            status = -1;
+        } else {
+            status = live_run_fetch_loop_init_finish(buffer, media_sequence,
+                                                     init_seg);
+        }
+
+        free(buffer->memory);
+        free(buffer);
+        curl_easy_cleanup(curl);
     }
 
     return status;
 }
 
-static int live_get_index_m3u8_finish(int qn, struct Buffer *buffer,
-                                      char **url_m3u8, char **base_url)
+static int live_get_url_m3u8_finish(int qn, struct Buffer *buffer,
+                                    char **url_m3u8, char **base_url)
 {
     int   status = 0;
     char *target = NULL;
@@ -557,8 +739,8 @@ static int live_get_url_m3u8(Stream *stream, char **url_m3u8, char **base_url)
             ERR("%s\n", curl_easy_strerror(code));
             status = -1;
         } else {
-            status = live_get_index_m3u8_finish(stream->qn, buffer, url_m3u8,
-                                                base_url);
+            status = live_get_url_m3u8_finish(stream->qn, buffer, url_m3u8,
+                                              base_url);
         }
 
         free(buffer->memory);
@@ -602,17 +784,45 @@ int stream_perform(Stream *stream)
         status = live_get_url_m3u8(stream, &url_m3u8, &base_url);
         if (status < 0 || url_m3u8 == NULL || base_url == NULL) {
             ERR("Aborted with code %d\n", status);
+
+            if (url_m3u8 != NULL) {
+                free(url_m3u8);
+            }
+            if (base_url != NULL) {
+                free(base_url);
+            }
             break;
         }
 
         INFO("Index m3u8: %s\n", url_m3u8);
-        status = live_run_fetch_loop(stream->output, url_m3u8, base_url);
+
+        char *media_sequence = NULL;
+        char *init_seg = NULL;
+        status = live_run_fetch_loop_init(url_m3u8, &media_sequence, &init_seg);
+        if (status < 0 || media_sequence == NULL || init_seg == NULL) {
+            ERR("Aborted with code %d\n", status);
+
+            if (init_seg != NULL) {
+                free(init_seg);
+            }
+            if (media_sequence != NULL) {
+                free(media_sequence);
+            }
+            free(url_m3u8);
+            free(base_url);
+            break;
+        }
+
+        status =
+            live_run_fetch_loop(stream, base_url, media_sequence, init_seg);
         if (status < 0) {
             ERR("Aborted with code %d\n", status);
         }
 
         free(url_m3u8);
         free(base_url);
+        free(init_seg);
+        free(media_sequence);
         break;
     }
     default: {
