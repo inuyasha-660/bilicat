@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <signal.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <yyjson.h>
 
@@ -76,10 +77,7 @@ static int video_download_and_merge(char *cookie, char *stream_url,
     int   status = 0;
     CURL *curl = curl_easy_init();
     if (curl) {
-        CURLcode       code;
-        struct Buffer *buffer = (struct Buffer *)malloc(sizeof(struct Buffer));
-        buffer->memory = NULL;
-        buffer->size = 0;
+        CURLcode code;
 
         struct curl_slist *header = NULL;
         header = curl_slist_append(header, USER_AGENT);
@@ -140,23 +138,34 @@ static int video_download_and_merge(char *cookie, char *stream_url,
         }
         fclose(audio_outfile);
 
-        char *command_merge = NULL;
-        asprintf(&command_merge, "ffmpeg -y -i \"%s\" -i \"%s\" -c copy \"%s\"",
-                 stream_outname, audio_outname, video_outname);
-        if (system(command_merge) < 0) {
-            ERR("Failed to merge %s & %s \n", stream_outname, audio_outname);
-            ERR("%s\n", strerror(errno));
-            status = -1;
-            free(command_merge);
-            goto end;
-        }
-        free(command_merge);
+        pid_t pid = fork();
+        if (pid == 0) {
+            char *command_args[] = {"-y",   "-i",          stream_outname,
+                                    "-i",   audio_outname, "-c",
+                                    "copy", video_outname, NULL};
 
-        if (remove(stream_outname) < 0 || remove(audio_outname) < 0) {
-            ERR("Failed to remove %s & %s\n", stream_outname, audio_outname);
-            ERR("%s\n", strerror(errno));
-            status = -1;
-            goto end;
+            execvp("ffmpeg", command_args);
+
+            _exit(errno);
+
+        } else {
+            int wstatus;
+            waitpid(pid, &wstatus, 0);
+
+            int child_status = WEXITSTATUS(wstatus);
+            if (WIFEXITED(wstatus) && child_status != 0) {
+                ERR("Failed to merge stream and audio\n");
+                ERR("%s\n", strerror(child_status));
+                status = -1;
+                goto end;
+            }
+
+            if (remove(stream_outname) < 0 || remove(audio_outname) < 0) {
+                ERR("Failed to remove %s & %s\n", stream_outname,
+                    audio_outname);
+                ERR("%s\n", strerror(errno));
+                status = -1;
+            }
         }
 
     end:
