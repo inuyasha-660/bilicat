@@ -177,15 +177,22 @@ static int video_stream_fetch_finish(Stream *stream, struct Buffer *buffer,
 
     yyjson_doc *doc = yyjson_read(buffer->memory, buffer->size, 0);
     yyjson_val *root = yyjson_doc_get_root(doc);
-    if (yyjson_is_null(root)) {
+    if (!root) {
         ERR("Failed to get root\n");
+        status = -1;
+        goto end;
+    }
+
+    yyjson_val *code = yyjson_obj_get(root, "code");
+    if (!code || yyjson_get_int(code) != 0) {
+        ERR("Failed to get dash stream: code: %d\n", yyjson_get_int(code));
         status = -1;
         goto end;
     }
 
     yyjson_val *data = yyjson_obj_get(root, "data");
     yyjson_val *dash = yyjson_obj_get(data, "dash");
-    if (yyjson_is_null(data) || yyjson_is_null(dash)) {
+    if (!data || !dash) {
         ERR("Failed to get data/dash\n");
         status = -1;
         goto end;
@@ -193,7 +200,7 @@ static int video_stream_fetch_finish(Stream *stream, struct Buffer *buffer,
 
     yyjson_val *video = yyjson_obj_get(dash, "video");
     yyjson_val *audio = yyjson_obj_get(dash, "audio");
-    if (yyjson_is_null(video) || yyjson_is_null(audio)) {
+    if (!video || !audio) {
         ERR("Failed to get video/audio\n");
         status = -1;
         goto end;
@@ -205,7 +212,7 @@ static int video_stream_fetch_finish(Stream *stream, struct Buffer *buffer,
     {
         yyjson_val *id = yyjson_obj_get(video_item, "id");
         yyjson_val *codecid = yyjson_obj_get(video_item, "codecid");
-        if (yyjson_is_null(id) || yyjson_is_null(codecid)) {
+        if (!id || !codecid) {
             ERR("Failed to get video:id/video:codecid\n");
             break;
         }
@@ -216,7 +223,7 @@ static int video_stream_fetch_finish(Stream *stream, struct Buffer *buffer,
                 // 使用 backupUrl 内的链接以避免不稳定的 mcdn
                 yyjson_val *backupurl = yyjson_obj_get(video_item, "backupUrl");
                 yyjson_val *url0 = yyjson_arr_get_first(backupurl);
-                if (!yyjson_is_null(url0)) {
+                if (url0) {
                     *stream_url = strdup(yyjson_get_str(url0));
                     break;
                 }
@@ -229,7 +236,7 @@ static int video_stream_fetch_finish(Stream *stream, struct Buffer *buffer,
     yyjson_arr_foreach(audio, idx, max, audio_item)
     {
         yyjson_val *id = yyjson_obj_get(audio_item, "id");
-        if (yyjson_is_null(id)) {
+        if (!id) {
             ERR("Failed to get audio:id\n");
             break;
         }
@@ -238,7 +245,7 @@ static int video_stream_fetch_finish(Stream *stream, struct Buffer *buffer,
             // 同上，取 backupUrl
             yyjson_val *backupurl = yyjson_obj_get(audio_item, "backupUrl");
             yyjson_val *url0 = yyjson_arr_get_first(backupurl);
-            if (!yyjson_is_null(url0)) {
+            if (url0) {
                 *audio_url = strdup(yyjson_get_str(url0));
                 break;
             }
@@ -264,10 +271,7 @@ static int video_stream_fetch(Stream *stream, Pages *pages)
         return -1;
     }
 
-    CURLcode       code;
-    struct Buffer *buffer = (struct Buffer *)malloc(sizeof(struct Buffer));
-    buffer->memory = NULL;
-    buffer->size = 0;
+    CURLcode code;
 
     struct curl_slist *header = NULL;
     header = curl_slist_append(header, USER_AGENT);
@@ -280,7 +284,6 @@ static int video_stream_fetch(Stream *stream, Pages *pages)
     curl_easy_setopt(curl, CURLOPT_COOKIE, stream->cookie);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, header);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_read_cb);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, buffer);
 
     char *base_url = NULL;
     if (strstr(stream->video_id, "BV")) {
@@ -292,9 +295,14 @@ static int video_stream_fetch(Stream *stream, Pages *pages)
     for (size_t i = 0; i < pages->num; i++) {
         char *url = NULL;
         char *stream_url = NULL, *audio_url = NULL;
-
         asprintf(&url, "%s&cid=%lu", base_url, pages->cid[i]);
+
+        struct Buffer *buffer = (struct Buffer *)malloc(sizeof(struct Buffer));
+        buffer->memory = NULL;
+        buffer->size = 0;
+
         curl_easy_setopt(curl, CURLOPT_URL, url);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, buffer);
 
         INFO("[GET] %s\n", url);
 
@@ -329,10 +337,10 @@ static int video_stream_fetch(Stream *stream, Pages *pages)
             free(audio_url);
         }
         free(url);
+        free(buffer->memory);
+        free(buffer);
     }
 
-    free(buffer->memory);
-    free(buffer);
     free(base_url);
     curl_slist_free_all(header);
     curl_easy_cleanup(curl);
@@ -356,14 +364,14 @@ static int video_print_info_finish(struct Buffer *buffer, Pages *pages)
     }
 
     yyjson_val *code = yyjson_obj_get(root, "code");
-    if (yyjson_is_null(code) || yyjson_get_int(code) != 0) {
+    if (!code || yyjson_get_int(code) != 0) {
         ERR("Failed to get video information: code %d\n", yyjson_get_int(code));
         goto end;
     }
 
     yyjson_val *data = yyjson_obj_get(root, "data");
     yyjson_val *view = yyjson_obj_get(data, "View");
-    if (yyjson_is_null(data) || yyjson_is_null(view)) {
+    if (!data || !view) {
         ERR("Failed to get data or View\n");
         goto end;
     }
@@ -371,7 +379,7 @@ static int video_print_info_finish(struct Buffer *buffer, Pages *pages)
     yyjson_val *bvid = yyjson_obj_get(view, "bvid");
     yyjson_val *aid = yyjson_obj_get(view, "aid");
     yyjson_val *title = yyjson_obj_get(view, "title");
-    if (yyjson_is_null(bvid) || yyjson_is_null(aid) || yyjson_is_null(title)) {
+    if (!bvid || !aid || !title) {
         ERR("Failed to get bvid/aid/title\n");
         goto end;
     }
@@ -379,13 +387,13 @@ static int video_print_info_finish(struct Buffer *buffer, Pages *pages)
     yyjson_val *owner = yyjson_obj_get(view, "owner");
     yyjson_val *mid = yyjson_obj_get(owner, "mid");
     yyjson_val *name = yyjson_obj_get(owner, "name");
-    if (yyjson_is_null(owner) || yyjson_is_null(mid) || yyjson_is_null(name)) {
+    if (!owner || !mid || !name) {
         ERR("Failed to get owner/mid/name\n");
         goto end;
     }
 
     yyjson_val *view_pages = yyjson_obj_get(view, "pages");
-    if (yyjson_is_null(view_pages)) {
+    if (!view_pages) {
         ERR("Failed to get pages\n");
         goto end;
     }
@@ -400,7 +408,7 @@ static int video_print_info_finish(struct Buffer *buffer, Pages *pages)
     {
         yyjson_val *cid = yyjson_obj_get(page, "cid");
         yyjson_val *part = yyjson_obj_get(page, "part");
-        if (yyjson_is_null(cid) || yyjson_is_null(part)) {
+        if (!cid || !part) {
             ERR("Failed to get cid/part\n");
             goto end;
         }
